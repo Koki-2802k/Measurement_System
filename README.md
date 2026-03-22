@@ -7,7 +7,7 @@
 #### 主な仕様
 - **出力レート**: 60 Hz
 - **計測データ**: カスタムモード5（加速度，角速度，クォータニオン）
-- **出力ファイル**: `boat.csv`，`oar_left.csv`，`oar_right.csv`
+- **出力ファイル**: `./data/boat.csv`，`./data/oar_left.csv`，`./data/oar_right.csv`
 
 #### 使い方
 1. スマートフォンの Movella DOT アプリ等を使用して，各センサのデバイスタグ名をそれぞれ `boat`，`oar_left`，`oar_right` に設定します．

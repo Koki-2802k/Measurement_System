@@ -35,7 +35,7 @@
 #   Custom Mode 5（Acc + Gyr + Quat）で計測データをCSVファイルに保存する．
 #
 # 出力ファイル:
-#   boat.csv, oar_left.csv, oar_right.csv
+#   data/boat.csv, data/oar_left.csv, data/oar_right.csv
 #
 # 使い方:
 #   1. 各センサにMovella DOTアプリでタグ名（boat, oar_left, oar_right）を設定
@@ -43,13 +43,14 @@
 #   3. 計測を終了するときは Ctrl+C を押す
 # ============================================================================
 
+import os
 from xdpchandler import *
 
 # デバイスタグ名 → CSVファイル名のマッピング
 TAG_TO_FILE = {
-    "boat": "boat.csv",
-    "oar_left": "oar_left.csv",
-    "oar_right": "oar_right.csv",
+    "boat": "data/boat.csv",
+    "oar_left": "data/oar_left.csv",
+    "oar_right": "data/oar_right.csv",
 }
 
 # 必要なデバイス台数
@@ -101,6 +102,9 @@ def get_device_file_mapping(devices):
 
 
 if __name__ == "__main__":
+    # データ保存先ディレクトリの作成
+    os.makedirs("data", exist_ok=True)
+
     xdpcHandler = XdpcHandler()
 
     # ========================================
