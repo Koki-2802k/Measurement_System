@@ -1,5 +1,21 @@
 # Measurement_System
 
+## インストレーション
+本システムを実行するための環境構築は以下の手順で行います．
+
+1. `conda`環境の作成と有効化
+   `lib`ディレクトリにある`rowingenv.yml`から環境を作成し，有効化します．
+   ```bash
+   conda env create -f lib/rowingenv.yml
+   conda activate rowingenv
+   ```
+
+2. Movella DOT PC SDK のインストール
+   提供されている `whl` ファイルを使用して，SDKをインストールします．
+   ```bash
+   pip install lib/movelladot_pc_sdk-2023.6.0-cp39-none-linux_x86_64.whl
+   ```
+
 ## スクリプトの概要
 ### `movelladot_pc_sdk_save_csv.py`
 3台の Movella DOT センサ（boat, oar_left, oar_right）をPC上で同期させ，計測データをCSVファイルとして保存するためのスクリプトです．
