@@ -29,8 +29,18 @@
 
 import getpass
 
+# 接続を許可する指定センサーのMACアドレスや情報を格納するための変数
+# （はじめにリスト型として宣言されています）．
 whitelist = list()
+
+# センサーをスキャンする際にBluetoothデバイス名として識別するためのベースとなる名前．
 dot_basename = "movella"
+
+# 現在のプログラムを実行しているOSのユーザー名を取得し，小文字に変換して格納する変数．
 username = getpass.getuser().lower()
+
+# 特定のセンサーのみを対象とするための辞書（上記リスト型変数を上書きしています）．
 whitelist = {}
+
+# センサーのデバイス名として使用される実際のベース文字列（上記変数を上書きしています）．
 dot_basename = "Movella DOT"
