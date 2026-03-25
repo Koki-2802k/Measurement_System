@@ -4,46 +4,44 @@ import os
 import sys
 import csv
 import time
-import shutil
 
-import threading
 import numpy as np
 import pandas as pd
 from functools import lru_cache
 from datetime import datetime, timedelta
-from sortedcontainers import SortedDict 
-import json
-import glob
-import re 
+from sortedcontainers import SortedDict
 
-MODE_CONFIG = {
-    "Custom modes - custom mode5": {
-        "skiprows": 12,
-        "acc_col_idx": 2,
-        "time_col_idx": 1,
-        "acc_scale": 1.0,
-        "shokihosei_slice": slice(8, 12),
-        "save_method": "savesMode5"
-    },
-    "Custom Modes - Custom Mode 4": {
-        "skiprows": 11,
-        "acc_col_idx": 10,
-        "time_col_idx": 1,
-        "acc_scale": 60.0,
-        "shokihosei_slice": slice(2, 6),
-        "save_method": "savesMode4"
-    },
-    "Streaming Mode": {
-        "skiprows": 1,
-        "acc_col_idx": 2,
-        "time_col_idx": 1,
-        "acc_scale": 1.0,
-        "shokihosei_slice": slice(8, 12),
-        "save_method": "savesMode5"
-    }
-} 
+# ============================================================================
+# Custom Mode 5 専用定数
+# ============================================================================
+
+# CSVメタデータの行数（データ開始行までのスキップ行数）
+SKIPROWS = 12
+
+# 加速度データのカラムインデックス
+ACC_COL_IDX = 2
+
+# 時刻データのカラムインデックス
+TIME_COL_IDX = 1
+
+# 初期姿勢補正用クォータニオン列の範囲
+QUAT_SLICE = slice(8, 12)
+
+# ストローク検出用の閾値加速度 [m/s²]
+DEFAULT_ACC_THRESHOLD = -4.0
+
+# boat.csv から抽出するデータ列インデックス
+# [SampleTimeFine, Acc_X, Acc_Y, Acc_Z, Gyr_X, Gyr_Y, Gyr_Z, Quat_W, Quat_X, Quat_Y, Quat_Z]
+BOAT_DATA_COLS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+
+# oar_left.csv / oar_right.csv から抽出するクォータニオン列インデックス
+# [Quat_W, Quat_X, Quat_Y, Quat_Z]
+OAR_DATA_COLS = [8, 9, 10, 11]
+
 
 class DataLoader:
+    """CSVデータの読み込みと位置情報の参照を行うクラス．"""
+
     def __init__(self, input_path):
         self.path = input_path
         self.locate_path = f'{self.path}/locate.csv'
@@ -52,26 +50,21 @@ class DataLoader:
         self.oar_right = None
         self.locate = None
         self.locate_dict = None
-        self.config = None
-        self.mode = None
         self.startTimeBoat = None
         self.iniTimeData = None
 
     def load_data(self):
+        """タイムアウト付きでCSVデータを読み込む．"""
         timeout = 600
         start = time.time()
         while True:
             if time.time() - start >= timeout:
                 print("Timeout")
                 sys.exit()
-                
+
             try:
-                self.getMode()
-                if self.config is None:
-                    raise ValueError("Unknown measurement mode")
-                    
-                self.readData()
-                self.readLocate()
+                self._read_sensor_data()
+                self._read_locate_data()
                 break
             except FileNotFoundError as e:
                 print(f"File not found: {e}. {int(timeout - (time.time() - start))} seconds left")
@@ -80,34 +73,20 @@ class DataLoader:
 
             time.sleep(2)
 
-    def getMode(self):
-        boat_path = f'{self.path}/boat.csv'
-        self.mode = "Streaming Mode" # Default
-        try:
-            with open(boat_path, newline='', encoding='utf-8') as file:
-                # Read first few lines to check for metadata
-                for i, row in enumerate(csv.reader(file)):
-                    if i > 15: break # Stop checking after 15 lines
-                    if row and row[0].strip() == "Measurement Mode:":
-                        self.mode = row[1].strip()
-                        break
-        except Exception as e:
-             print(f"Warning: Could not read mode from file, defaulting to Streaming Mode. Error: {e}")
+    def _read_sensor_data(self):
+        """3台のセンサCSVファイルを読み込む．"""
+        self.boat = pd.read_csv(
+            f"{self.path}/boat.csv", skiprows=range(SKIPROWS), index_col=False
+        )
+        self.oar_left = pd.read_csv(
+            f"{self.path}/oar_left.csv", skiprows=range(SKIPROWS), index_col=False
+        )
+        self.oar_right = pd.read_csv(
+            f"{self.path}/oar_right.csv", skiprows=range(SKIPROWS), index_col=False
+        )
 
-        if self.mode in MODE_CONFIG:
-            self.config = MODE_CONFIG[self.mode]
-            print(f"Mode detected: {self.mode}")
-        else:
-            self.config = None
-            print(f"Unknown mode: {self.mode}")
-
-    def readData(self):
-        skiprows = self.config['skiprows']
-        self.boat = pd.read_csv("{}/boat.csv".format(self.path), skiprows=range(skiprows), index_col=False)
-        self.oar_left = pd.read_csv("{}/oar_left.csv".format(self.path), skiprows=range(skiprows), index_col=False)
-        self.oar_right = pd.read_csv("{}/oar_right.csv".format(self.path),skiprows=range(skiprows), index_col=False)   
-
-    def readLocate(self):
+    def _read_locate_data(self):
+        """locate.csv を読み込み，時刻ベースの辞書を構築する．"""
         if not os.path.exists(self.locate_path):
             raise FileNotFoundError(f"{self.locate_path} not found.")
 
@@ -122,16 +101,18 @@ class DataLoader:
         if self.locate.empty:
             raise ValueError("locate.csv is empty or has invalid data.")
 
-        locate_dict = self.locate.set_index('rounded_time')[['latitude', 'longitude', 'speed']].to_dict(orient='index')
+        locate_dict = self.locate.set_index('rounded_time')[
+            ['latitude', 'longitude', 'speed']
+        ].to_dict(orient='index')
         self.locate_dict = SortedDict(locate_dict)
 
     @lru_cache(maxsize=50000)
-    def getLocate(self, time_str):
+    def get_locate(self, time_str):
+        """時刻に最も近い位置情報を返す．"""
+        default_value = {'latitude': 0, 'longitude': 0, 'speed': 0}
         try:
-            default_value = {'latitude': 0, 'longitude': 0, 'speed': 0}
-
             if isinstance(time_str, (float, int)):
-                time_val = self.getTime(time_str)
+                time_val = self.get_time(time_str)
                 if time_val is None:
                     return default_value
             elif isinstance(time_str, str):
@@ -142,7 +123,9 @@ class DataLoader:
             else:
                 raise ValueError(f"Unsupported type for time_str: {type(time_str)}")
 
-            rounded_time = time_val.replace(microsecond=(time_val.microsecond // 10000) * 10000)
+            rounded_time = time_val.replace(
+                microsecond=(time_val.microsecond // 10000) * 10000
+            )
             time_range = 0.05
             time_range_start = rounded_time - timedelta(seconds=time_range)
             time_range_end = rounded_time + timedelta(seconds=time_range)
@@ -154,97 +137,62 @@ class DataLoader:
             closest_time = min(candidates, key=lambda x: abs(x - rounded_time))
             return self.locate_dict[closest_time]
 
-        except Exception as e:
-            return {'latitude': 0, 'longitude': 0, 'speed': 0}
+        except Exception:
+            return default_value
 
-    def getTime(self, TimeData):
+    def get_time(self, time_data):
+        """SampleTimeFine値から実時刻（datetime）を算出する．"""
         try:
             if self.startTimeBoat is None or self.iniTimeData is None:
-                if self.mode == "Streaming Mode":
-                    start_time_file = f'{self.path}/starttime.txt'
-                    if os.path.exists(start_time_file):
-                        with open(start_time_file, 'r') as f:
-                            start_time_str = f.read().strip()
-                            self.startTimeBoat = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S.%f")
-                    else:
-                        # Fallback if no starttime file
-                        self.startTimeBoat = datetime.now() 
-                        print("Warning: starttime.txt not found, using current time for startTimeBoat.")
-                else:
-                    with open(f'{self.path}/boat.csv', newline='', encoding='utf-8') as file:
-                        reader = csv.reader(file)
-                        for _ in range(8):
-                            next(reader)
-                        row = next(reader)
-                        start_time_str = row[1]
-                        
-                        if 'JST' in start_time_str:
-                            self.startTimeBoat = datetime.strptime(start_time_str, "%Y-%m-%d_%H:%M:%S_%f JST")
-                        else:
-                            self.startTimeBoat = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S.%f %z")
-                
-                self.iniTimeData = self.boat.iat[0, 1] if self.boat is not None and not self.boat.empty else 0
-            
-            TimeDelta = timedelta(seconds=(TimeData - self.iniTimeData) / 1e6)
-            calculated_time = self.startTimeBoat + TimeDelta
-            return calculated_time
+                self._init_start_time()
+
+            time_delta = timedelta(seconds=(time_data - self.iniTimeData) / 1e6)
+            return self.startTimeBoat + time_delta
         except Exception as e:
-            print(f"Error in getTime with TimeData={TimeData}: {e}")
+            print(f"Error in get_time with time_data={time_data}: {e}")
             return None
 
-class ProgressManager:
-    def __init__(self, input_path, output_path):
-        self.progress_file = os.path.join(input_path, "progress.json")
-        self.folder_path = output_path
-        self.count = self.get_initial_count()
+    def _init_start_time(self):
+        """boat.csv のメタデータから計測開始時刻を取得する．"""
+        with open(f'{self.path}/boat.csv', newline='', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            # メタデータの9行目（0-indexed: 8行目）に開始時刻がある
+            for _ in range(8):
+                next(reader)
+            row = next(reader)
+            start_time_str = row[1]
 
-    def get_initial_count(self):
-        files = glob.glob(os.path.join(self.folder_path, "sample_*.csv"))
-        if not files:
-            return 0
-        
-        max_count = 0
-        for f in files:
-            match = re.search(r"sample_(\d+)\.csv", f)
-            if match:
-                count = int(match.group(1))
-                if count > max_count:
-                    max_count = count
-        return max_count
+            if 'JST' in start_time_str:
+                self.startTimeBoat = datetime.strptime(
+                    start_time_str, "%Y-%m-%d_%H:%M:%S_%f JST"
+                )
+            else:
+                self.startTimeBoat = datetime.strptime(
+                    start_time_str, "%Y-%m-%d %H:%M:%S.%f %z"
+                )
 
-    def load_progress(self):
-        if os.path.exists(self.progress_file):
-            try:
-                with open(self.progress_file, 'r') as f:
-                    data = json.load(f)
-                    return data.get('last_index', 0)
-            except Exception as e:
-                print(f"Failed to load progress: {e}")
-                return 0
-        return 0
+        self.iniTimeData = (
+            self.boat.iat[0, TIME_COL_IDX]
+            if self.boat is not None and not self.boat.empty
+            else 0
+        )
 
-    def save_progress(self, index):
-        try:
-            with open(self.progress_file, 'w') as f:
-                json.dump({'last_index': index}, f)
-        except Exception as e:
-            print(f"Failed to save progress: {e}")
-
-    def increment_count(self):
-        self.count += 1
-        return self.count
 
 from dropbox_handler import DataUploader
 
+
 class DataProcessor:
-    def __init__(self, loader, progress_manager, output_path):
+    """ストローク検出とCSV分割保存を行うクラス．"""
+
+    # 1ストロークの最大検出数
+    COUNT_LIMIT = 31
+
+    def __init__(self, loader, output_path):
         self.loader = loader
-        self.progress_manager = progress_manager
         self.folder_path = output_path
-        self.CountLimit = 31
-        self.value = -4.0
-        
-        # Initial angle errors
+        self.value = DEFAULT_ACC_THRESHOLD
+
+        # 初期姿勢補正の角度誤差
         self.err_degol_x = 0
         self.err_degol_y = 0
         self.err_degol_z = 0
@@ -255,49 +203,60 @@ class DataProcessor:
         self.err_degor_y = 0
         self.err_degor_z = 0
 
-    def process(self):
+    def process(self, last_index=0, file_count=0):
+        """初期補正計算 → ストローク検出 → CSV保存を実行する．
+
+        Parameters:
+            last_index: 処理開始位置のインデックス
+            file_count: 現在の出力ファイル番号（sample_{file_count+1}.csv から保存）
+
+        Returns:
+            tuple: (last_index, file_count) 処理後の最新インデックスとファイル数
+        """
         try:
             os.makedirs(self.folder_path, exist_ok=True)
         except OSError as e:
             print(f"Error while handling directory {self.folder_path}: {e}")
 
-        self.calculate_initial_errors()
+        self._calculate_initial_errors()
         print('*----------------------------------------------------------------*')
-        self.partition2() 
+        last_index, file_count = self._detect_and_save_strokes(last_index, file_count)
         print('*----------------------------------------------------------------*')
+        return last_index, file_count
 
-    def calculate_initial_errors(self):
-        shokihosei_left = 0
-        shokihosei_right = 0
-        shokihosei_slice = self.loader.config['shokihosei_slice']
+    def _calculate_initial_errors(self):
+        """各センサの初期姿勢からクォータニオン角度誤差を計算する．"""
+        oar_left_vals = np.array(self.loader.oar_left.iloc[0, QUAT_SLICE])
+        boat_vals = np.array(self.loader.boat.iloc[0, QUAT_SLICE])
+        oar_right_vals = np.array(self.loader.oar_right.iloc[0, QUAT_SLICE])
 
-        oar_left_vals = np.array(self.loader.oar_left.iloc[shokihosei_left, shokihosei_slice])
-        boat_vals = np.array(self.loader.boat.iloc[shokihosei_left, shokihosei_slice])
-        oar_right_vals = np.array(self.loader.oar_right.iloc[shokihosei_right, shokihosei_slice])
-            
-        self.err_degol_x, self.err_degol_y, self.err_degol_z = self.calculateAngle(*oar_left_vals)
-        self.err_degb_x, self.err_degb_y, self.err_degb_z = self.calculateAngle(*boat_vals)
-        self.err_degor_x, self.err_degor_y, self.err_degor_z = self.calculateAngle(*oar_right_vals)
+        self.err_degol_x, self.err_degol_y, self.err_degol_z = self._quat_to_euler_error(*oar_left_vals)
+        self.err_degb_x, self.err_degb_y, self.err_degb_z = self._quat_to_euler_error(*boat_vals)
+        self.err_degor_x, self.err_degor_y, self.err_degor_z = self._quat_to_euler_error(*oar_right_vals)
 
-    def partition2(self):
+    def _detect_and_save_strokes(self, last_index, file_count):
+        """加速度データからストロークを検出し，各ストロークをCSVに保存する．
+
+        Parameters:
+            last_index: 処理開始位置のインデックス
+            file_count: 現在の出力ファイル番号
+
+        Returns:
+            tuple: (last_index, file_count) 処理後の最新インデックスとファイル数
+        """
         duration_threshold = 4000
         stroke_count = 0
         minacc_start = minacc_end = self.value
         minacc_start_time = minacc_end_time = 0
         pos_start = pos_end = 0
-        
-        start_index = self.progress_manager.load_progress()
-        i = start_index
-        print(f"Resuming from index: {i}")
-        
-        acc_col_idx = self.loader.config['acc_col_idx']
-        time_col_idx = self.loader.config['time_col_idx']
-        acc_scale = self.loader.config['acc_scale']
-        
-        accx_data = self.loader.boat.iloc[:, acc_col_idx].to_numpy() * acc_scale
-        time_data = self.loader.boat.iloc[:, time_col_idx].to_numpy() * (1e-3)
 
-        while i < len(accx_data) and stroke_count < self.CountLimit:
+        i = last_index
+        print(f"Resuming from index: {i}")
+
+        accx_data = self.loader.boat.iloc[:, ACC_COL_IDX].to_numpy()
+        time_data = self.loader.boat.iloc[:, TIME_COL_IDX].to_numpy() * 1e-3
+
+        while i < len(accx_data) and stroke_count < self.COUNT_LIMIT:
             accx = accx_data[i]
 
             if accx < self.value:
@@ -323,147 +282,162 @@ class DataProcessor:
             if minacc_start_time != 0 and minacc_end_time != 0:
                 duration = minacc_end_time - minacc_start_time
                 if duration < duration_threshold:
-                    save_method_name = self.loader.config['save_method']
-                    getattr(self, save_method_name)(pos_start, pos_end)
-                        
+                    file_count += 1
+                    self._save_stroke(pos_start, pos_end, file_count)
+
                 minacc_start, minacc_end = minacc_end, self.value
                 minacc_start_time, minacc_end_time = minacc_end_time, 0
                 pos_start, pos_end = pos_end, 0
                 stroke_count = 0
 
-            if i % 100 == 0:
-                 self.progress_manager.save_progress(i)
-
             i += 1
-        
-        self.progress_manager.save_progress(i)
 
-    def savesMode5(self, start, end):
-        self._save_stroke_data(start, end, 
-                               boat_cols=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-                               oar_cols=[8, 9, 10, 11],
-                               acc_mult=1.0)
+        return i, file_count
 
-    def savesMode4(self, start, end):
-        self._save_stroke_data(start, end, 
-                               boat_cols=[1, 2, 3, 4, 5, 10, 11, 12],
-                               oar_cols=[2, 3, 4, 5],
-                               acc_mult=60.0)
+    def _save_stroke(self, start, end, file_count):
+        """1ストローク分のデータを切り出してCSVに保存する．
 
-    def _save_stroke_data(self, start, end, boat_cols, oar_cols, acc_mult):
-        boat_data = self.loader.boat.iloc[start:end, boat_cols].values
-        oar_left_data = self.loader.oar_left.iloc[start:end, oar_cols].values
-        oar_right_data = self.loader.oar_right.iloc[start:end, oar_cols].values
-        
-        spm = 60 / ((self.loader.boat.iat[end, 1] - self.loader.boat.iat[start, 1]) / 1e6)   
+        Parameters:
+            start: ストローク開始インデックス
+            end: ストローク終了インデックス
+            file_count: 出力ファイルの番号
+        """
+        boat_data = self.loader.boat.iloc[start:end, BOAT_DATA_COLS].values
+        oar_left_data = self.loader.oar_left.iloc[start:end, OAR_DATA_COLS].values
+        oar_right_data = self.loader.oar_right.iloc[start:end, OAR_DATA_COLS].values
+
+        # SPM（Strokes Per Minute）の計算
+        spm = 60 / ((self.loader.boat.iat[end, TIME_COL_IDX] - self.loader.boat.iat[start, TIME_COL_IDX]) / 1e6)
         rows = []
-        
-        for j, (boat_row, oar_left_row, oar_right_row) in enumerate(zip(boat_data, oar_left_data, oar_right_data), start=start):
-            if acc_mult == 1.0: # Mode 5
-                time_val, accx, accy, accz, xg, yg, zg, wb, xb, yb, zb = boat_row
-            else: # Mode 4
-                time_val, wb, xb, yb, zb, accx, accy, accz = boat_row
-                accx, accy, accz = accx * acc_mult, accy * acc_mult, accz * acc_mult
-                xg, yg, zg = 0, 0, 0 # Not available in Mode 4 based on original code
 
+        for j, (boat_row, oar_left_row, oar_right_row) in enumerate(
+            zip(boat_data, oar_left_data, oar_right_data), start=start
+        ):
+            time_val, accx, accy, accz, xg, yg, zg, wb, xb, yb, zb = boat_row
             wol, xol, yol, zol = oar_left_row
             wor, xor, yor, zor = oar_right_row
-            
-            deg_rad = np.arctan2(2 * (xb * yb + wb * zb), wb * wb + xb * xb - yb * yb - zb * zb)
+
+            # ボートのヨー角（方位角）を計算
+            deg_rad = np.arctan2(
+                2 * (xb * yb + wb * zb),
+                wb * wb + xb * xb - yb * yb - zb * zb
+            )
             deg = np.degrees(deg_rad)
 
-            angle_left = self.cordDeg(np.degrees(np.arctan2(wol * wol - xol * xol + yol * yol - zol * zol, 
-                                                            2 * (xol * yol - wol * zol))) - self.err_degol_z - deg + self.err_degb_z)
-            angle_right = self.cordDeg(np.degrees(np.arctan2(wor * wor - xor * xor + yor * yor - zor * zor, 
-                                                            2 * (xor * yor - wor * zor))) - self.err_degol_z - deg + self.err_degb_z)
-            
-            locate = self.loader.getLocate(time_val)
+            # オール角度の計算（初期誤差を補正）
+            angle_left = self._cord_deg(
+                np.degrees(np.arctan2(
+                    wol * wol - xol * xol + yol * yol - zol * zol,
+                    2 * (xol * yol - wol * zol)
+                )) - self.err_degol_z - deg + self.err_degb_z
+            )
+            angle_right = self._cord_deg(
+                np.degrees(np.arctan2(
+                    wor * wor - xor * xor + yor * yor - zor * zor,
+                    2 * (xor * yor - wor * zor)
+                )) - self.err_degol_z - deg + self.err_degb_z
+            )
+
+            # 位置情報の取得
+            locate = self.loader.get_locate(time_val)
             lat, lng, speed = locate['latitude'], locate['longitude'], locate['speed']
-            
-            row_data = {
+
+            rows.append({
                 "number": j,
-                "time": self.loader.getTime(time_val),
+                "time": self.loader.get_time(time_val),
                 "wol": wol, "xol": xol, "yol": yol, "zol": zol,
                 "wor": wor, "xor": xor, "yor": yor, "zor": zor,
                 "wb": wb, "xb": xb, "yb": yb, "zb": zb,
                 "accx": accx, "accy": accy, "accz": accz,
-                "deg": self.degree(deg),
-                "angle_left": self.catfin(angle_left),
-                "angle_right": self.catfin(angle_right),
+                "gyrox": xg, "gyroy": yg, "gyroz": zg,
+                "deg": self._normalize_deg(deg),
+                "angle_left": self._angle_to_offset(angle_left),
+                "angle_right": self._angle_to_offset(angle_right),
                 "err_deg_oar_left_x": self.err_degol_x,
                 "err_deg_oar_right_x": self.err_degor_x,
                 "err_deg_boat_x": self.err_degb_x,
                 "err_deg_oar_left_y": self.err_degol_y,
                 "err_deg_oar_right_y": self.err_degor_y,
                 "err_deg_boat_y": self.err_degb_y,
-                "err_deg_oar_left_z": self.err_degol_z - (180 if acc_mult == 1.0 else 0), # Mode 5 subtracts 180
-                "err_deg_oar_right_z": self.err_degor_z + (180 if acc_mult == 1.0 else 0), # Mode 5 adds 180
+                "err_deg_oar_left_z": self.err_degol_z - 180,
+                "err_deg_oar_right_z": self.err_degor_z + 180,
                 "err_deg_boat_z": self.err_degb_z,
                 "latitude": lat,
                 "longitude": lng,
                 "speed": speed,
                 "SPM": spm
-            }
-            if acc_mult == 1.0:
-                row_data.update({"gyrox": xg, "gyroy": yg, "gyroz": zg})
-            
-            rows.append(row_data)
+            })
 
         data = pd.DataFrame.from_records(rows).dropna(axis=1, how='all')
         data.set_index("number", inplace=True)
-            
+
         avg_speed = data['speed'].mean()
         data['SPLIT'] = 0.0 if avg_speed == 0.0 else 500 / avg_speed
-            
-        count = self.progress_manager.increment_count()
-        filename = "{}/sample_{}.csv".format(self.folder_path, count)
-        
+
+        filename = f"{self.folder_path}/sample_{file_count}.csv"
+
         with open(filename, mode='w', newline='', encoding='utf-8') as file:
             writer = csv.writer(file)
-            writer.writerow(["Measurement Mode:", self.loader.mode])
+            writer.writerow(["Measurement Mode:", "Custom modes - custom mode5"])
             data.to_csv(file, index=True)
-            
+
         print(f"{filename} にデータを保存しました.")
 
-    def degree(self, num):
-        if num < 0:
-            return 360 + num
-        else:
-            return num
+    # ------------------------------------------------------------------
+    # ユーティリティメソッド
+    # ------------------------------------------------------------------
 
-    def cordDeg(self, value):
-        if value > 0:
-            return value
-        else:
-            return 360 + value
+    @staticmethod
+    def _normalize_deg(num):
+        """角度を 0〜360 の範囲に正規化する．"""
+        return 360 + num if num < 0 else num
 
-    def catfin(self, deg):
-        if deg - 90 < 0:
-            return -int(90 - deg)
-        else:
-            return int(deg - 90)  
-    
-    def calculateAngle(self, w, x, y, z):
+    @staticmethod
+    def _cord_deg(value):
+        """角度を正の値（0〜360）に変換する．"""
+        return value if value > 0 else 360 + value
+
+    @staticmethod
+    def _angle_to_offset(deg):
+        """角度を90度基準のオフセット値に変換する．"""
+        return int(deg - 90) if deg - 90 >= 0 else -int(90 - deg)
+
+    @staticmethod
+    def _quat_to_euler_error(w, x, y, z):
+        """クォータニオンからオイラー角誤差を計算する．"""
         err_x = -np.degrees(np.arctan2(2 * (y * z - w * x), w * w - x * x - y * y + z * z))
         err_y = -np.degrees(np.arctan2(2 * (x * z - w * y), -w * w + x * x + y * y - z * z))
         err_z = -np.degrees(np.arctan2(2 * (x * y - w * z), w * w - x * x + y * y - z * z))
-        return err_x, err_y, err_z  
+        return err_x, err_y, err_z
+
 
 class Datadivision:
+    """データ分割処理のファサードクラス．"""
+
     def __init__(self, input_path, output_path):
         self.loader = DataLoader(input_path)
-        self.progress_manager = ProgressManager(input_path, output_path)
         self.uploader = DataUploader(input_path, output_path)
-        self.processor = DataProcessor(self.loader, self.progress_manager, output_path)
-        self.value = -4.0 # Default value, can be overridden
+        self.processor = DataProcessor(self.loader, output_path)
+        self.value = DEFAULT_ACC_THRESHOLD
 
     def load_data(self):
+        """データの読み込みとログフォルダの作成を行う．"""
         self.loader.load_data()
         self.uploader.makeLogfolder()
 
-    def datadivision(self):
+    def datadivision(self, last_index=0, file_count=0):
+        """ストローク検出と分割保存を実行する．
+
+        Parameters:
+            last_index: 処理開始位置のインデックス
+            file_count: 現在の出力ファイル番号
+
+        Returns:
+            tuple: (last_index, file_count) 処理後の最新インデックスとファイル数
+        """
         self.processor.value = self.value
-        self.processor.process()
+        return self.processor.process(last_index, file_count)
 
     def upload(self):
+        """分割データをアップロードする．"""
         self.uploader.upload()
