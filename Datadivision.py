@@ -101,6 +101,27 @@ class DataProcessor:
         if locate_path and os.path.exists(locate_path):
             self._load_locate_data(locate_path)
 
+    def add_gps_data(self, gps_data_list):
+        """リアルタイムで取得したGPSデータをlocate_dictに追加する．
+        
+        Parameters:
+            gps_data_list (list of dict): [{'time': datetime, 'latitude': float, 'longitude': float, 'speed': float}, ...]
+        """
+        if not gps_data_list:
+            return
+
+        if self.locate_dict is None:
+            self.locate_dict = SortedDict()
+            
+        for data in gps_data_list:
+            time_val = data['time']
+            rounded_time = time_val.replace(microsecond=(time_val.microsecond // 10000) * 10000)
+            self.locate_dict[rounded_time] = {
+                'latitude': data['latitude'],
+                'longitude': data['longitude'],
+                'speed': data['speed']
+            }
+
         # 出力ディレクトリの作成
         os.makedirs(self.folder_path, exist_ok=True)
 

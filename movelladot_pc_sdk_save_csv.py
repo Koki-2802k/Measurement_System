@@ -54,6 +54,7 @@ from Datadivision import (
     DataProcessor, BOAT_COLUMNS, OAR_COLUMNS,
     create_empty_stroke_state
 )
+from get_gpsdata import GPSReader
 
 # デバイスタグ名 → CSVファイル名のマッピング
 TAG_TO_FILE = {
@@ -350,6 +351,10 @@ if __name__ == "__main__":
         locate_path=locate_path if os.path.exists(locate_path) else None
     )
 
+    # GPSモジュールの読み取り開始
+    gps_reader = GPSReader()
+    gps_reader.start()
+
     # ストローク状態・進捗の初期化
     stroke_state = create_empty_stroke_state()
     last_index = 0
@@ -414,6 +419,11 @@ if __name__ == "__main__":
 
                 # バッファがチャンクサイズに達したら処理
                 if len(buffer_boat) >= CHUNK_SIZE:
+                    # GPSデータを取り出してDataProcessorに追加
+                    gps_data = gps_reader.get_new_data()
+                    if gps_data:
+                        processor.add_gps_data(gps_data)
+
                     # ① CSVファイルへ追記
                     flush_buffer_to_csv(
                         csv_writers, buffer_boat, buffer_oar_left, buffer_oar_right
@@ -462,6 +472,9 @@ if __name__ == "__main__":
     # CSVファイルを閉じる
     for fh in csv_file_handles.values():
         fh.close()
+
+    print("\nGPSの読み取りを停止中...")
+    gps_reader.stop()
 
     print("\n計測を停止中...")
     for device in xdpcHandler.connectedDots():
