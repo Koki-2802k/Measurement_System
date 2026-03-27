@@ -28,7 +28,7 @@
 #
 
 # ============================================================================
-# Movella DOT 3台同期計測 → CSV保存 + リアルタイムストローク分割スクリプト
+# Movella DOT 3台同期計測 → CSV保存 + リアルタイムストローク分割モジュール
 #
 # 概要:
 #   3台のMovella DOT（boat, oar_left, oar_right）を同期させ，
@@ -40,13 +40,14 @@
 #   divided-data/sample_*.csv（ストローク分割データ）
 #
 # 使い方:
-#   1. 各センサにMovella DOTアプリでタグ名（boat, oar_left, oar_right）を設定
-#   2. python movelladot_pc_sdk_save_csv.py
-#   3. 計測を終了するときは Ctrl+C を押す
+#   main.py から run() を呼び出して実行する．
+#   python main.py
 # ============================================================================
 
 import os
 import csv
+import signal
+import logging
 from datetime import datetime
 import pandas as pd
 from xdpchandler import *
@@ -188,7 +189,12 @@ def flush_buffer_to_csv(writers, buffer_boat, buffer_oar_left, buffer_oar_right)
         writers["oar_right"].writerow(row)
 
 
-if __name__ == "__main__":
+def run():
+    """計測システム全体を実行する．
+
+    Movella DOT 3台の同期計測 → CSV保存 → リアルタイムストローク分割を行う．
+    GPSデータの並行取得も含む．
+    """
     # データ保存先ディレクトリの作成
     os.makedirs("data", exist_ok=True)
 
@@ -365,6 +371,10 @@ if __name__ == "__main__":
     buffer_oar_left = []
     buffer_oar_right = []
 
+    # パケットロス監視カウンタ
+    packet_total = 0
+    packet_loss = 0
+
     # 計測再開
     print("計測を再開します...")
     for device in xdpcHandler.connectedDots():
@@ -403,6 +413,8 @@ if __name__ == "__main__":
                 row_oar_left = extract_packet_data(packet_oar_left)
                 row_oar_right = extract_packet_data(packet_oar_right)
 
+                packet_total += 1
+
                 # 3台すべてのデータが揃った場合のみバッファに追加
                 if row_boat and row_oar_left and row_oar_right:
                     buffer_boat.append(row_boat)
@@ -412,10 +424,14 @@ if __name__ == "__main__":
                     # コンソール表示（オイラー角）
                     if packet_boat is not None and packet_boat.containsOrientation():
                         euler = packet_boat.orientationEuler()
+                        loss_rate = (packet_loss / packet_total * 100) if packet_total > 0 else 0
                         s = f"R:{euler.x():6.1f} P:{euler.y():6.1f} Y:{euler.z():6.1f} | "
                         s += f"Buf:{len(buffer_boat):>4}/{CHUNK_SIZE} | "
-                        s += f"Files:{file_count}"
+                        s += f"Files:{file_count} | "
+                        s += f"Loss:{loss_rate:.1f}%"
                         print(f"\r{s}", end="", flush=True)
+                else:
+                    packet_loss += 1
 
                 # バッファがチャンクサイズに達したら処理
                 if len(buffer_boat) >= CHUNK_SIZE:
@@ -423,6 +439,11 @@ if __name__ == "__main__":
                     gps_data = gps_reader.get_new_data()
                     if gps_data:
                         processor.add_gps_data(gps_data)
+
+                    # GPSスレッドの健全性チェック
+                    if not gps_reader.is_healthy:
+                        print("\n[WARNING] GPSモジュールが正常に動作していません．"
+                              "位置情報の精度が低下している可能性があります．")
 
                     # ① CSVファイルへ追記
                     flush_buffer_to_csv(
@@ -448,57 +469,75 @@ if __name__ == "__main__":
         print("\n")
         print("-" * 60)
         print("Ctrl+C を検出．計測を終了します．")
+    except Exception as e:
+        print(f"\n予期しないエラーが発生しました: {e}")
+    finally:
+        # ========================================
+        # 10. 終了処理（全終了パスで保証）
+        # ========================================
 
-    # ========================================
-    # 10. 終了処理
-    # ========================================
+        # パケットロス統計の表示
+        if packet_total > 0:
+            loss_rate = packet_loss / packet_total * 100
+            print(f"\nパケット統計: 総受信={packet_total}, ロス={packet_loss} ({loss_rate:.1f}%)")
 
-    # 残りのバッファをフラッシュ
-    if buffer_boat:
-        print(f"\n残りバッファ（{len(buffer_boat)}件）を処理中...")
-        flush_buffer_to_csv(
-            csv_writers, buffer_boat, buffer_oar_left, buffer_oar_right
-        )
+        # 残りのバッファをフラッシュ
+        if buffer_boat:
+            print(f"\n残りバッファ（{len(buffer_boat)}件）を処理中...")
+            try:
+                # GPSデータを最後に取得
+                gps_data = gps_reader.get_new_data()
+                if gps_data:
+                    processor.add_gps_data(gps_data)
 
-        df_boat = pd.DataFrame(buffer_boat, columns=BOAT_COLUMNS)
-        df_oar_left = pd.DataFrame(buffer_oar_left, columns=OAR_COLUMNS)
-        df_oar_right = pd.DataFrame(buffer_oar_right, columns=OAR_COLUMNS)
+                flush_buffer_to_csv(
+                    csv_writers, buffer_boat, buffer_oar_left, buffer_oar_right
+                )
 
-        last_index, file_count, stroke_state = processor.process_chunk(
-            df_boat, df_oar_left, df_oar_right,
-            last_index, file_count, stroke_state
-        )
+                df_boat = pd.DataFrame(buffer_boat, columns=BOAT_COLUMNS)
+                df_oar_left = pd.DataFrame(buffer_oar_left, columns=OAR_COLUMNS)
+                df_oar_right = pd.DataFrame(buffer_oar_right, columns=OAR_COLUMNS)
 
-    # CSVファイルを閉じる
-    for fh in csv_file_handles.values():
-        fh.close()
+                last_index, file_count, stroke_state = processor.process_chunk(
+                    df_boat, df_oar_left, df_oar_right,
+                    last_index, file_count, stroke_state
+                )
+            except Exception as e:
+                print(f"残りバッファの処理中にエラー: {e}")
 
-    print("\nGPSの読み取りを停止中...")
-    gps_reader.stop()
+        # CSVファイルを閉じる
+        for fh in csv_file_handles.values():
+            try:
+                fh.close()
+            except Exception:
+                pass
 
-    print("\n計測を停止中...")
-    for device in xdpcHandler.connectedDots():
-        if not device.stopMeasurement():
-            print(f"  [{device.deviceTagName()}] 計測停止失敗")
+        print("\nGPSの読み取りを停止中...")
+        gps_reader.stop()
 
-    print("同期を停止中...")
-    if not manager.stopSync():
-        print("同期停止失敗")
+        print("\n計測を停止中...")
+        for device in xdpcHandler.connectedDots():
+            if not device.stopMeasurement():
+                print(f"  [{device.deviceTagName()}] 計測停止失敗")
 
-    print("\nヘッディングをデフォルトに戻しています...")
-    for device in xdpcHandler.connectedDots():
-        tag = device.deviceTagName()
-        if device.resetOrientation(movelladot_pc_sdk.XRM_DefaultAlignment):
-            print(f"  [{tag}] デフォルトに復元")
-        else:
-            print(f"  [{tag}] 復元失敗: {device.lastResultText()}")
+        print("同期を停止中...")
+        if not manager.stopSync():
+            print("同期停止失敗")
 
-    print("\nポートを閉じています...")
-    manager.close()
+        print("\nヘッディングをデフォルトに戻しています...")
+        for device in xdpcHandler.connectedDots():
+            tag = device.deviceTagName()
+            if device.resetOrientation(movelladot_pc_sdk.XRM_DefaultAlignment):
+                print(f"  [{tag}] デフォルトに復元")
+            else:
+                print(f"  [{tag}] 復元失敗: {device.lastResultText()}")
 
-    print("\n保存されたCSVファイル:")
-    for tag, filename in TAG_TO_FILE.items():
-        print(f"  {tag} → {filename}")
-    print(f"\n分割データ: {DIVIDED_OUTPUT_PATH}/sample_1.csv ～ sample_{file_count}.csv")
-    print(f"計測結果: last_index={last_index}, file_count={file_count}")
-    print("\n正常に終了しました．")
+        print("\nポートを閉じています...")
+        manager.close()
+
+        print("\n保存されたCSVファイル:")
+        for tag, filename in TAG_TO_FILE.items():
+            print(f"  {tag} → {filename}")
+        print(f"\n分割データ: {DIVIDED_OUTPUT_PATH}/sample_1.csv ～ sample_{file_count}.csv")
+        print(f"計測結果: last_index={last_index}, file_count={file_count}")
+        print("\n正常に終了しました．")

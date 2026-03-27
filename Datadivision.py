@@ -5,7 +5,6 @@ import csv
 
 import numpy as np
 import pandas as pd
-from functools import lru_cache
 from datetime import datetime, timedelta
 from sortedcontainers import SortedDict
 
@@ -101,9 +100,15 @@ class DataProcessor:
         if locate_path and os.path.exists(locate_path):
             self._load_locate_data(locate_path)
 
+        # 手動キャッシュ（get_locate 用，直前の検索結果を保持）
+        self._locate_cache = {}
+
+        # 出力ディレクトリの作成
+        os.makedirs(self.folder_path, exist_ok=True)
+
     def add_gps_data(self, gps_data_list):
         """リアルタイムで取得したGPSデータをlocate_dictに追加する．
-        
+
         Parameters:
             gps_data_list (list of dict): [{'time': datetime, 'latitude': float, 'longitude': float, 'speed': float}, ...]
         """
@@ -112,7 +117,7 @@ class DataProcessor:
 
         if self.locate_dict is None:
             self.locate_dict = SortedDict()
-            
+
         for data in gps_data_list:
             time_val = data['time']
             rounded_time = time_val.replace(microsecond=(time_val.microsecond // 10000) * 10000)
@@ -122,8 +127,8 @@ class DataProcessor:
                 'speed': data['speed']
             }
 
-        # 出力ディレクトリの作成
-        os.makedirs(self.folder_path, exist_ok=True)
+        # 新しいGPSデータが追加されたのでキャッシュをクリア
+        self._locate_cache.clear()
 
     def _load_locate_data(self, locate_path):
         """locate.csv を読み込み，時刻ベースの辞書を構築する．"""
@@ -379,10 +384,18 @@ class DataProcessor:
             print(f"Error in get_time with time_data={time_data}: {e}")
             return None
 
-    @lru_cache(maxsize=50000)
     def get_locate(self, time_val_raw):
-        """時刻に最も近い位置情報を返す．"""
+        """時刻に最も近い位置情報を返す．
+
+        手動キャッシュにより同一の time_val_raw に対する再検索を回避する．
+        add_gps_data() が呼ばれるとキャッシュは自動的にクリアされる．
+        """
         default_value = {'latitude': 0, 'longitude': 0, 'speed': 0}
+
+        # 手動キャッシュの確認
+        if time_val_raw in self._locate_cache:
+            return self._locate_cache[time_val_raw]
+
         if self.locate_dict is None:
             return default_value
 
@@ -400,10 +413,13 @@ class DataProcessor:
 
             candidates = list(self.locate_dict.irange(time_range_start, time_range_end))
             if not candidates:
+                self._locate_cache[time_val_raw] = default_value
                 return default_value
 
             closest_time = min(candidates, key=lambda x: abs(x - rounded_time))
-            return self.locate_dict[closest_time]
+            result = self.locate_dict[closest_time]
+            self._locate_cache[time_val_raw] = result
+            return result
         except Exception:
             return default_value
 
