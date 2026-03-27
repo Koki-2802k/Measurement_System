@@ -4,7 +4,7 @@ import time
 import csv
 import pandas as pd
 from datetime import datetime
-from Datadivision import (
+from datadivision import (
     DataProcessor, BOAT_COLUMNS, OAR_COLUMNS,
     create_empty_stroke_state,
     ACC_COL_IDX, TIME_COL_IDX, QUAT_SLICE
@@ -18,7 +18,7 @@ from Datadivision import (
 #   ストローク分割を実行して divided-data/sample_*.csv を生成する．
 #
 # 使い方:
-#   python Divide.py
+#   python divide.py
 # ============================================================================
 
 # CSVメタデータの行数（SDK生成のCSVの場合のスキップ行数）

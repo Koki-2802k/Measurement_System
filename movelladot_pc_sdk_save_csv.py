@@ -51,7 +51,7 @@ import logging
 from datetime import datetime
 import pandas as pd
 from xdpchandler import *
-from Datadivision import (
+from datadivision import (
     DataProcessor, BOAT_COLUMNS, OAR_COLUMNS,
     create_empty_stroke_state
 )
