@@ -268,8 +268,8 @@ def run():
     deviceList = xdpcHandler.connectedDots()
     rootAddress = deviceList[-1].bluetoothAddress()
 
-    print(f"\n同期を開始します... ルートノード: {rootAddress}")
-    print("少なくとも14秒かかります")
+    print(f"\n[SYNC] 同期を開始します... ルートノード: {rootAddress}")
+    print("[SYNC] 少なくとも14秒かかります。そのままお待ちください...")
 
     if not manager.startSync(rootAddress):
         print(f"同期開始失敗: {manager.lastResultText()}")
@@ -286,13 +286,15 @@ def run():
             xdpcHandler.cleanup()
             exit(-1)
 
-    print("同期が完了しました．")
+    print("[SYNC] 同期が完了しました！")
 
     # ========================================
     # 7. Phase 1: ヘッディングリセット（ロギングなし）
     # ========================================
-    print("\n--- Phase 1: ヘッディングリセット ---")
-    print("計測を開始します（ロギングなし）...")
+    print("\n" + "=" * 60)
+    print("[Phase 1] ヘッディングリセット (方位の初期化)")
+    print("=" * 60)
+    print("[Phase 1] 計測を開始します（ロギングなし）...")
 
     for device in xdpcHandler.connectedDots():
         if not device.startMeasurement(movelladot_pc_sdk.XsPayloadMode_CustomMode5):
@@ -310,7 +312,7 @@ def run():
         time.sleep(0.1)
 
     # ユーザに確認してからヘッディングリセットを実行
-    print("\nセンサを正しい位置に配置してください．")
+    print(f"\n[アクション要求] センサをボート/オールの基準位置に正しく配置してください．")
     while True:
         response = input("ヘッディングリセットを行いますか？ (y/n): ").strip().lower()
         if response == "y":
@@ -339,15 +341,17 @@ def run():
     # ========================================
     # 8. Phase 2: CSV保存 + リアルタイム分割計測
     # ========================================
-    print("\n--- Phase 2: CSV保存 + リアルタイムストローク分割 ---")
+    print("\n" + "=" * 60)
+    print("[Phase 2] CSV保存 + リアルタイムストローク分割")
+    print("=" * 60)
 
     # CSVファイルの初期化（ヘッダー書き込み）
     csv_writers, csv_file_handles = init_csv_files()
-    print("CSVファイルを初期化しました．")
+    print("[INIT] CSVファイルの準備が完了しました．")
 
     # 計測開始時刻を記録
     measurement_start_time = datetime.now()
-    print(f"計測開始時刻: {measurement_start_time}")
+    print(f"[INIT] 計測開始時刻: {measurement_start_time}")
 
     # DataProcessor の初期化（リアルタイム分割用）
     locate_path = "data/locate.csv"
@@ -376,7 +380,7 @@ def run():
     packet_loss = 0
 
     # 計測再開
-    print("計測を再開します...")
+    print("\n[Phase 2] 計測を再開します...")
     for device in xdpcHandler.connectedDots():
         if not device.startMeasurement(movelladot_pc_sdk.XsPayloadMode_CustomMode5):
             print(f"  [{device.deviceTagName()}] 計測開始失敗: {device.lastResultText()}")
@@ -386,12 +390,12 @@ def run():
                 continue
         print(f"  [{device.deviceTagName()}] 計測開始")
 
-    print("計測を開始します，競技を行ってください．")
+    print("\n[Phase 2] 計測を開始しました！ボートを漕いでください．")
 
     # ========================================
     # 9. データ受信ループ（Ctrl+Cで終了）
     # ========================================
-    print("\n計測中... Ctrl+C で終了します．")
+    print("\n[INFO] リアルタイムデータ受信中... [Ctrl+C] で安全に終了します．")
     print("-" * 60)
 
     # ヘッダ表示
@@ -483,7 +487,7 @@ def run():
 
         # 残りのバッファをフラッシュ
         if buffer_boat:
-            print(f"\n残りバッファ（{len(buffer_boat)}件）を処理中...")
+            print(f"\n[終了処理] 残りバッファ（{len(buffer_boat)}パケット）の最終処理を実行中...")
             try:
                 # GPSデータを最後に取得
                 gps_data = gps_reader.get_new_data()
@@ -532,7 +536,7 @@ def run():
             else:
                 print(f"  [{tag}] 復元失敗: {device.lastResultText()}")
 
-        print("\nポートを閉じています...")
+        print("[終了処理] コネクションポートを閉じています...")
         manager.close()
 
         print("\n保存されたCSVファイル:")

@@ -33,7 +33,9 @@ from threading import Lock
 try:
     from pynput import keyboard
     HAS_PYNPUT = True
-except ImportError:
+except Exception as e:
+    # WSL環境などでXサーバーがなく pynput がクラッシュする場合の回避策
+    print(f"[詳細情報] キーボード入力ライブラリ(pynput)の読み込みをスキップしました（{e}）．")
     HAS_PYNPUT = False
 from user_settings import *
 import time

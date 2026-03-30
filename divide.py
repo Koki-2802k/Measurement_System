@@ -38,6 +38,10 @@ class Divide:
 
     def run(self, val):
         """切り分け処理を実行する．"""
+        print("=" * 60)
+        print("[SYSTEM] オフラインストローク分割 (divide.py) を開始します...")
+        print("=" * 60)
+
         input_path = "./data"
         output_path = "./divided-data"
         locate_path = os.path.join(input_path, "locate.csv")
@@ -46,8 +50,11 @@ class Divide:
         df_boat, df_oar_left, df_oar_right, start_time = self._load_csv_data(input_path)
 
         if df_boat is None:
-            print("データの読み込みに失敗しました．")
+            print("[エラー] データの読み込みに失敗しました．")
             return
+
+        print(f"[INFO] 読み込み完了: boat({len(df_boat)}行), oar_left({len(df_oar_left)}行), oar_right({len(df_oar_right)}行)")
+        print(f"[INFO] チャンク処理を開始します...")
 
         # DataProcessor の初期化
         processor = DataProcessor(
@@ -68,7 +75,10 @@ class Divide:
             last_index, file_count, stroke_state
         )
 
-        print(f"処理結果: last_index={last_index}, file_count={file_count}")
+        print("=" * 60)
+        print(f"[完了] 処理完了！ 生成されたファイル数: {file_count} (最終インデックス: {last_index})")
+        print(f"出力先フォルダ: {output_path}/")
+        print("=" * 60)
 
     def _load_csv_data(self, input_path):
         """CSVデータを読み込む（SDK形式・Python形式の両方に対応）．
@@ -109,7 +119,7 @@ class Divide:
 
                 # Python側で保存したCSV: 先頭行がカラム名
                 if first_row and first_row[0].strip() == "PacketCounter":
-                    print("Format: Python CSV (ヘッダーのみ)")
+                    print(f"[INFO] フォーマット自動判定: Python CSV形式 (ヘッダーのみ)")
                     return 0, datetime.now()
 
                 # SDK形式: メタデータ行がある
@@ -128,7 +138,7 @@ class Divide:
                                 start_time = datetime.strptime(
                                     start_time_str, "%Y-%m-%d %H:%M:%S.%f %z"
                                 )
-                            print(f"Format: SDK CSV (start_time={start_time})")
+                            print(f"[INFO] フォーマット自動判定: SDK CSV形式 (開始時刻={start_time})")
                             return SKIPROWS_SDK, start_time
                         except ValueError:
                             pass

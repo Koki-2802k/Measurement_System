@@ -42,6 +42,7 @@ class GPSReader:
         self._consecutive_errors = 0
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
+        print("[GPS] GPSReader スレッドを開始しました．データの取得を待機します...")
         logger.info("GPSReader スレッドを開始しました．")
 
     def stop(self):
@@ -50,9 +51,11 @@ class GPSReader:
         if self.thread is not None:
             self.thread.join(timeout=self._STOP_TIMEOUT)
             if self.thread.is_alive():
+                print(f"[GPS WARNING] スレッドが {self._STOP_TIMEOUT} 秒以内に停止しませんでした．")
                 logger.warning("GPSReader スレッドが %s 秒以内に停止しませんでした．",
                                self._STOP_TIMEOUT)
             else:
+                print("[GPS] スレッドを正常に停止しました．")
                 logger.info("GPSReader スレッドを正常に停止しました．")
 
     def _run(self):

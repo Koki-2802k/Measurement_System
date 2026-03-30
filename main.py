@@ -15,4 +15,14 @@ from movelladot_pc_sdk_save_csv import run
 
 
 if __name__ == "__main__":
-    run()
+    print("=" * 60)
+    print("[SYSTEM] ボート計測システムを起動します...")
+    print("=" * 60)
+    try:
+        run()
+    except Exception as e:
+        print(f"\n[エラー] システム実行中に異常が発生しました: {e}")
+    finally:
+        print("=" * 60)
+        print("[SYSTEM] システムを終了しました．")
+        print("=" * 60)
