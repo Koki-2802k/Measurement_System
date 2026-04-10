@@ -30,12 +30,15 @@
 import movelladot_pc_sdk
 from collections import defaultdict
 from threading import Lock
+import os
 try:
+    if "WSL_DISTRO_NAME" in os.environ:
+        raise ImportError("pynput is not supported well in WSL")
     from pynput import keyboard
     HAS_PYNPUT = True
 except ImportError:
     HAS_PYNPUT = False
-from user_settings import *
+from user_setting import *
 import time
 
 waitForConnections = True

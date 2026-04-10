@@ -110,13 +110,16 @@ if __name__ == "__main__":
     # ========================================
     # 1. 初期化
     # ========================================
+    print("\n[システム] XdpcHandlerを初期化しています...")
     if not xdpcHandler.initialize():
+        print("[エラー] 初期化に失敗しました．")
         xdpcHandler.cleanup()
         exit(-1)
 
     # ========================================
     # 2. BLEスキャン
     # ========================================
+    print("\n[スキャン] Movella DOTセンサーを検索中（この処理には数秒〜数十秒かかります）...")
     xdpcHandler.scanForDots()
     if len(xdpcHandler.detectedDots()) == 0:
         print("Movella DOTデバイスが見つかりませんでした．中断します．")
@@ -126,6 +129,7 @@ if __name__ == "__main__":
     # ========================================
     # 3. デバイス接続
     # ========================================
+    print("\n[接続] 検出されたセンサーに接続しています...")
     xdpcHandler.connectDots()
 
     if len(xdpcHandler.connectedDots()) < REQUIRED_DEVICE_COUNT:
