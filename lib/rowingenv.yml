@@ -76,4 +76,6 @@ dependencies:
       - evdev==1.9.3
       - movelladot-pc-sdk==2023.6.0
       - numpy==1.26.4
+      - pandas
+      - sortedcontainers
 prefix: /home/koki/anaconda3/envs/rowingenv

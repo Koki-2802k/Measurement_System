@@ -203,6 +203,7 @@ def run():
     # ========================================
     # 1. 初期化
     # ========================================
+    print("1. 初期化")
     if not xdpcHandler.initialize():
         xdpcHandler.cleanup()
         exit(-1)
